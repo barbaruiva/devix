@@ -1,0 +1,6 @@
+{
+  "activeRoutes": {
+    "/api1": "dev",
+    "/api2": "stage"
+  }
+}

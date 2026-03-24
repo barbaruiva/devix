@@ -1,0 +1,29 @@
+{
+  "port": 51418,
+  "proxies": [
+    {
+      "name": "API 1",
+      "path": "/api1",
+      "routes": {
+        "dev": {
+          "destination": "http://localhost:8080"
+        },
+        "stage": {
+          "destination": "http://gateway-stage/api1"
+        }
+      }
+    },
+    {
+      "name": "API 2",
+      "path": "/api2",
+      "routes": {
+        "dev": {
+          "destination": "http://localhost:8081"
+        },
+        "stage": {
+          "destination": "http://gateway-stage/api2"
+        }
+      }
+    }
+  ]
+}
