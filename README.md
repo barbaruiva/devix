@@ -96,7 +96,8 @@ The Logs tab renders structured entries with:
 - Method
 - Proxy path
 - Full destination path
-- Request size (bytes)
+- Request header / body
+- Response header / body
 
 ## Notes
 

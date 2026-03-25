@@ -93,12 +93,24 @@ function colorizeRoute(route) {
   }
 }
 
-function getRequestSize(req) {
-  const rawSize = req.headers['content-length'];
-  if (Array.isArray(rawSize)) {
-    return Number.parseInt(rawSize[0], 10) || 0;
+function sanitizeForLog(value) {
+  if (value === undefined) {
+    return null;
   }
-  return Number.parseInt(rawSize, 10) || 0;
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return null;
+  }
 }
 
 class ProxyRuntime {
@@ -173,7 +185,6 @@ class ProxyRuntime {
           const destinationPath = `${routeConfig.destination}${proxiedPath}`;
           const statusCode = Number.parseInt(proxyRes.statusCode, 10) || 0;
           const method = req.method;
-          const requestSize = getRequestSize(req);
           this.logger.info(
             `[${statusCode}] ${method.padStart(7)} ${proxy.path}${req.path || ''} -> ${destinationPath}`,
             `[${colorizeStatusCode(statusCode)}] ${method.padStart(7)} ${proxy.path}${chalk.gray(req.path || '')} -> ${routeConfig.destination}${chalk.gray(proxiedPath)}`,
@@ -182,8 +193,12 @@ class ProxyRuntime {
               statusCode,
               method,
               proxyPath: proxy.path,
+              destinationBase: routeConfig.destination,
               destinationPath,
-              requestSize,
+              requestHeaders: sanitizeForLog(req.headers),
+              requestBody: sanitizeForLog(req.body),
+              responseHeaders: sanitizeForLog(proxyRes.headers),
+              responseBody: null,
             },
           );
         },
@@ -192,7 +207,6 @@ class ProxyRuntime {
           const method = req.method;
           const proxiedPath = req.path || '';
           const destinationPath = `${routeConfig.destination}${proxiedPath}`;
-          const requestSize = getRequestSize(req);
           this.logger.error(
             `[${statusCode}] ${method.padStart(7)} ${proxy.path}${proxiedPath} -> ${destinationPath}`,
             `[${colorizeStatusCode(statusCode)}] ${method.padStart(7)} ${proxy.path}${chalk.gray(proxiedPath)} -> ${routeConfig.destination}${chalk.gray(proxiedPath)}`,
@@ -201,8 +215,12 @@ class ProxyRuntime {
               statusCode,
               method,
               proxyPath: proxy.path,
+              destinationBase: routeConfig.destination,
               destinationPath,
-              requestSize,
+              requestHeaders: sanitizeForLog(req.headers),
+              requestBody: sanitizeForLog(req.body),
+              responseHeaders: null,
+              responseBody: sanitizeForLog({ error: err.message || String(err) }),
             },
           );
 
@@ -239,8 +257,12 @@ class ProxyRuntime {
           statusCode: 200,
           method: 'INFO',
           proxyPath: '-',
+          destinationBase: null,
           destinationPath: message,
-          requestSize: null,
+          requestHeaders: null,
+          requestBody: null,
+          responseHeaders: null,
+          responseBody: null,
         },
       );
     });

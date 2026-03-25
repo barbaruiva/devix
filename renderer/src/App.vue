@@ -28,17 +28,6 @@ function formatTimestamp(timestamp) {
   return date.toLocaleString();
 }
 
-function formatRequestSize(bytes) {
-  if (bytes === null || bytes === undefined || bytes === '') {
-    return '-';
-  }
-  const size = Number.parseInt(bytes, 10);
-  if (!Number.isFinite(size) || size < 0) {
-    return '-';
-  }
-  return String(size);
-}
-
 function statusLabel(entry) {
   const code = Number.parseInt(entry.statusCode, 10);
   if (Number.isFinite(code)) {
@@ -68,6 +57,102 @@ function methodBadgeClass(method) {
   if (normalizedMethod === 'PATCH') return 'method-patch';
   if (normalizedMethod === 'DELETE') return 'method-delete';
   return 'method-default';
+}
+
+function hasInspectableData(data) {
+  if (data === null || data === undefined) {
+    return false;
+  }
+
+  if (typeof data === 'string') {
+    return data.trim().length > 0;
+  }
+
+  if (Array.isArray(data)) {
+    return data.length > 0;
+  }
+
+  if (typeof data === 'object') {
+    return Object.keys(data).length > 0;
+  }
+
+  return true;
+}
+
+function toTitleCaseHeader(headerName) {
+  return String(headerName)
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join('-');
+}
+
+function headerTooltipValue(headers) {
+  if (!hasInspectableData(headers)) {
+    return '';
+  }
+
+  if (typeof headers === 'string') {
+    return headers;
+  }
+
+  if (Array.isArray(headers)) {
+    return headers.map((line) => String(line)).join('\n');
+  }
+
+  if (typeof headers === 'object') {
+    return Object.entries(headers)
+      .map(([header, value]) => {
+        const displayHeader = toTitleCaseHeader(header);
+        if (Array.isArray(value)) {
+          return `${displayHeader}: ${value.join(', ')}`;
+        }
+        if (value !== null && typeof value === 'object') {
+          return `${displayHeader}: ${JSON.stringify(value)}`;
+        }
+        return `${displayHeader}: ${String(value)}`;
+      })
+      .join('\n');
+  }
+
+  return String(headers);
+}
+
+function bodyTooltipValue(data) {
+  if (!hasInspectableData(data)) {
+    return '';
+  }
+
+  if (data === null || data === undefined) {
+    return 'Not available';
+  }
+
+  if (typeof data === 'string') {
+    return data || 'Not available';
+  }
+
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch (_error) {
+    return 'Not available';
+  }
+}
+
+function destinationParts(entry) {
+  const fullDestination = entry.destinationPath || entry.message || '-'
+  const base = entry.destinationBase
+
+  if (!base || typeof fullDestination !== 'string' || !fullDestination.startsWith(base)) {
+    return {
+      base: null,
+      suffix: fullDestination,
+    }
+  }
+
+  return {
+    base,
+    suffix: fullDestination.slice(base.length),
+  }
 }
 
 async function scrollLogsToBottom() {
@@ -143,9 +228,6 @@ onUnmounted(() => {
     </nav>
 
     <section v-if="activeTab === 'logs'" class="panel panel-logs">
-      <header>
-        <h1>Live Logs</h1>
-      </header>
       <div ref="logsPanel" class="log-stream">
         <p v-if="!logs.length" class="empty">No logs yet.</p>
         <table v-else class="logs-table">
@@ -156,7 +238,8 @@ onUnmounted(() => {
               <th>Method</th>
               <th>Proxy</th>
               <th>Destination</th>
-              <th>Request size</th>
+              <th>Request</th>
+              <th>Response</th>
             </tr>
           </thead>
           <tbody>
@@ -173,8 +256,43 @@ onUnmounted(() => {
                 </span>
               </td>
               <td><code>{{ entry.proxyPath || '-' }}</code></td>
-              <td><code>{{ entry.destinationPath || entry.message || '-' }}</code></td>
-              <td>{{ formatRequestSize(entry.requestSize) }}</td>
+              <td>
+                <code>
+                  <span
+                    v-if="destinationParts(entry).base"
+                    class="destination-static"
+                  >{{ destinationParts(entry).base }}</span>
+                  <span>{{ destinationParts(entry).suffix }}</span>
+                </code>
+              </td>
+              <td>
+                <div class="inspect-icons">
+                  <span
+                    class="inspect-icon"
+                    :class="{ unavailable: !hasInspectableData(entry.requestHeaders) }"
+                    :title="hasInspectableData(entry.requestHeaders) ? headerTooltipValue(entry.requestHeaders) : null"
+                  >🧾</span>
+                  <span
+                    class="inspect-icon"
+                    :class="{ unavailable: !hasInspectableData(entry.requestBody) }"
+                    :title="hasInspectableData(entry.requestBody) ? bodyTooltipValue(entry.requestBody) : null"
+                  >📦</span>
+                </div>
+              </td>
+              <td>
+                <div class="inspect-icons">
+                  <span
+                    class="inspect-icon"
+                    :class="{ unavailable: !hasInspectableData(entry.responseHeaders) }"
+                    :title="hasInspectableData(entry.responseHeaders) ? headerTooltipValue(entry.responseHeaders) : null"
+                  >🧾</span>
+                  <span
+                    class="inspect-icon"
+                    :class="{ unavailable: !hasInspectableData(entry.responseBody) }"
+                    :title="hasInspectableData(entry.responseBody) ? bodyTooltipValue(entry.responseBody) : null"
+                  >📦</span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -346,6 +464,36 @@ select {
   color: #c7d7ff;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+.destination-static {
+  color: #6f7789;
+}
+
+.inspect-icons {
+  display: flex;
+  gap: 8px;
+}
+
+.inspect-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #2f3c57;
+  color: #e6efff;
+  cursor: default;
+}
+
+.inspect-icon.unavailable {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
 
 .badge {
   display: inline-block;
