@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const { ProxyRuntime } = require('../src/runtime/proxyRuntime');
@@ -23,6 +24,14 @@ function appendLog(entry) {
 }
 
 runtime.logger.subscribe(appendLog);
+
+function broadcastStatus(status) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('status:updated', status);
+  }
+}
+
+runtime.onStatusChange(broadcastStatus);
 
 function createWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -137,7 +146,7 @@ function refreshTrayMenu() {
   const config = runtime.getConfig();
   const proxyItems = (config?.proxies || []).map(buildProxyMenuItem);
   const menuTemplate = [
-    { label: 'Express Proxy Router', enabled: false },
+    { label: 'Devix', enabled: false },
     { type: 'separator' },
     ...proxyItems,
     { type: 'separator' },
@@ -166,7 +175,7 @@ function createTray() {
 
   const icon = nativeImage.createFromPath(trayIconPath);
   tray = new Tray(icon);
-  tray.setToolTip('Express Proxy Router');
+  tray.setToolTip('Devix');
   refreshTrayMenu();
 
   tray.on('click', () => {
@@ -180,6 +189,8 @@ function createTray() {
 }
 
 ipcMain.handle('config:get', async () => runtime.getConfig());
+
+ipcMain.handle('status:get', async () => runtime.getStatus());
 
 ipcMain.handle('proxy:set-active-route', async (_, payload) => {
   const { proxyKey, routeKey } = payload || {};
@@ -206,6 +217,22 @@ ipcMain.handle('proxy:set-active-route', async (_, payload) => {
 });
 
 ipcMain.handle('logs:subscribe', async () => logsBuffer);
+
+ipcMain.handle('proxies:get', async () => {
+  return JSON.parse(fs.readFileSync(proxiesPath, 'utf8'));
+});
+
+ipcMain.handle('proxies:save', async (_, config) => {
+  try {
+    await runtime.updateProxiesConfig(config);
+    refreshTrayMenu();
+    notifyConfigUpdated();
+    return { success: true, config: runtime.getConfig() };
+  } catch (error) {
+    runtime.logger.error(`Failed to save proxies: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+});
 
 app.whenReady().then(() => {
   try {

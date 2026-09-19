@@ -1,27 +1,39 @@
 {
-  "port": 51418,
+  "port": 12345,
   "proxies": [
     {
-      "name": "API 1",
-      "path": "/api1",
+      "name": "Posts",
+      "path": "/posts",
       "routes": {
-        "dev": {
-          "destination": "http://localhost:8080"
+        "local": {
+          "destination": "http://localhost:3001"
         },
-        "stage": {
-          "destination": "http://gateway-stage/api1"
+        "jsonplaceholder": {
+          "destination": "https://jsonplaceholder.typicode.com"
+        },
+        "dummyjson": {
+          "destination": "https://dummyjson.com"
         }
       }
     },
     {
-      "name": "API 2",
-      "path": "/api2",
+      "name": "Users",
+      "path": "/users",
       "routes": {
-        "dev": {
-          "destination": "http://localhost:8081"
+        "local": {
+          "destination": "http://localhost:3001"
         },
-        "stage": {
-          "destination": "http://gateway-stage/api2"
+        "reqres": {
+          "destination": "https://reqres.in/api"
+        }
+      }
+    },
+    {
+      "name": "HTTP Debug",
+      "path": "/debug",
+      "routes": {
+        "httpbin": {
+          "destination": "https://httpbin.org"
         }
       }
     }

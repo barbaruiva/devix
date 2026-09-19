@@ -1,173 +1,127 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import AppBar from './components/AppBar.vue';
+import ConfirmDialog from './components/ConfirmDialog.vue';
+import LogsTab from './components/LogsTab.vue';
+import RoutesTab from './components/RoutesTab.vue';
+import SettingsTab from './components/SettingsTab.vue';
+import StatusBar from './components/StatusBar.vue';
+import ToastHost from './components/ToastHost.vue';
+import { useToasts } from './lib/toasts.js';
+
+// Tab identity is internal ('logs' | 'config' | 'apis'); only the labels are user-facing.
+const tabs = [
+  { id: 'logs', label: 'Logs' },
+  { id: 'config', label: 'Routes' },
+  { id: 'apis', label: 'Settings' },
+];
+const activeTab = ref('logs');
 
 const config = ref(null);
-const activeTab = ref('logs');
+const status = ref(null);
 const loading = ref(true);
-const errorMessage = ref('');
 const logs = ref([]);
-const savingMap = reactive({});
-const logsPanel = ref(null);
+const requestCount = ref(0);
+// path -> 'saving' | 'saved'. The Routes tab renders it as a spinner and then a check;
+// the entry is dropped once the check has had its moment.
+const routeSaveState = reactive({});
+const SAVED_FEEDBACK_MS = 1600;
+const savedTimers = new Map();
+
+const editorConfig = ref(null);
+const editorSaving = ref(false);
+const editorLoading = ref(false);
+// The Settings tab is unmounted when the user leaves it, which is exactly why the shell
+// has to know about pending edits before the switch happens.
+const editorDirty = ref(false);
+const pendingTab = ref(null);
+
+const { toasts, pushToast, dismissToast, runToastAction } = useToasts();
+
 let unsubscribeLogs = null;
 let unsubscribeConfigUpdates = null;
+let unsubscribeStatusUpdates = null;
+let logSeq = 0;
+
+function withLogId(entry) {
+  logSeq += 1;
+  return { ...entry, _id: `log-${logSeq}` };
+}
+
+// Only proxied requests carry a method; server/runtime lines do not count as traffic.
+function isRequestEntry(entry) {
+  return Boolean(entry.method);
+}
 
 const proxies = computed(() => config.value?.proxies ?? []);
 
-function destinationFor(proxy) {
-  return proxy.routes?.[proxy.activeRoute]?.destination || '-';
-}
+const isListening = computed(() => status.value?.listening === true);
 
-function formatTimestamp(timestamp) {
-  if (!timestamp) {
-    return '-';
+const statusText = computed(() => {
+  if (isListening.value) {
+    return 'Running';
   }
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
-  return date.toLocaleString();
-}
+  return status.value?.error ? 'Error' : 'Stopped';
+});
 
-function statusLabel(entry) {
-  const code = Number.parseInt(entry.statusCode, 10);
-  if (Number.isFinite(code)) {
-    return String(code);
-  }
-  return entry.level === 'error' ? 'ERR' : 'INFO';
-}
+const statusPort = computed(() => status.value?.port ?? config.value?.port ?? null);
 
-function statusBadgeClass(entry) {
-  const code = Number.parseInt(entry.statusCode, 10);
-  if (Number.isFinite(code)) {
-    if (code < 200) return 'status-info';
-    if (code < 300) return 'status-ok';
-    if (code < 400) return 'status-info';
-    if (code < 500) return 'status-client-error';
-    return 'status-server-error';
-  }
+const statusProxyCount = computed(() => status.value?.proxyCount ?? proxies.value.length);
 
-  return entry.level === 'error' ? 'status-server-error' : 'status-info';
-}
-
-function methodBadgeClass(method) {
-  const normalizedMethod = (method || '').toUpperCase();
-  if (normalizedMethod === 'GET') return 'method-get';
-  if (normalizedMethod === 'POST') return 'method-post';
-  if (normalizedMethod === 'PUT') return 'method-put';
-  if (normalizedMethod === 'PATCH') return 'method-patch';
-  if (normalizedMethod === 'DELETE') return 'method-delete';
-  return 'method-default';
-}
-
-function hasInspectableData(data) {
-  if (data === null || data === undefined) {
-    return false;
-  }
-
-  if (typeof data === 'string') {
-    return data.trim().length > 0;
-  }
-
-  if (Array.isArray(data)) {
-    return data.length > 0;
-  }
-
-  if (typeof data === 'object') {
-    return Object.keys(data).length > 0;
-  }
-
-  return true;
-}
-
-function toTitleCaseHeader(headerName) {
-  return String(headerName)
-    .split('-')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join('-');
-}
-
-function headerTooltipValue(headers) {
-  if (!hasInspectableData(headers)) {
-    return '';
-  }
-
-  if (typeof headers === 'string') {
-    return headers;
-  }
-
-  if (Array.isArray(headers)) {
-    return headers.map((line) => String(line)).join('\n');
-  }
-
-  if (typeof headers === 'object') {
-    return Object.entries(headers)
-      .map(([header, value]) => {
-        const displayHeader = toTitleCaseHeader(header);
-        if (Array.isArray(value)) {
-          return `${displayHeader}: ${value.join(', ')}`;
-        }
-        if (value !== null && typeof value === 'object') {
-          return `${displayHeader}: ${JSON.stringify(value)}`;
-        }
-        return `${displayHeader}: ${String(value)}`;
-      })
-      .join('\n');
-  }
-
-  return String(headers);
-}
-
-function bodyTooltipValue(data) {
-  if (!hasInspectableData(data)) {
-    return '';
-  }
-
-  if (data === null || data === undefined) {
-    return 'Not available';
-  }
-
-  if (typeof data === 'string') {
-    return data || 'Not available';
-  }
-
+async function loadEditor() {
+  editorLoading.value = true;
   try {
-    return JSON.stringify(data, null, 2);
-  } catch (_error) {
-    return 'Not available';
+    editorConfig.value = await window.proxyApi.getProxiesConfig();
+  } catch (error) {
+    pushToast(error.message || 'Failed to load proxies config', { tone: 'error' });
+  } finally {
+    editorLoading.value = false;
   }
 }
 
-function destinationParts(entry) {
-  const fullDestination = entry.destinationPath || entry.message || '-'
-  const base = entry.destinationBase
-
-  if (!base || typeof fullDestination !== 'string' || !fullDestination.startsWith(base)) {
-    return {
-      base: null,
-      suffix: fullDestination,
+async function saveProxies(payload) {
+  editorSaving.value = true;
+  try {
+    const result = await window.proxyApi.saveProxiesConfig(payload);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to save');
     }
-  }
-
-  return {
-    base,
-    suffix: fullDestination.slice(base.length),
+    config.value = result.config;
+    pushToast('Configuration saved · proxy server reloaded', { tone: 'success' });
+    await loadEditor();
+  } catch (error) {
+    pushToast(error.message || 'Failed to save proxies config', { tone: 'error' });
+  } finally {
+    editorSaving.value = false;
   }
 }
 
-async function scrollLogsToBottom() {
-  await nextTick();
-  if (!logsPanel.value) {
-    return;
+function clearSavedTimer(path) {
+  const timer = savedTimers.get(path);
+  if (timer) {
+    clearTimeout(timer);
+    savedTimers.delete(path);
   }
-  logsPanel.value.scrollTop = logsPanel.value.scrollHeight;
+}
+
+function markRouteSaved(path) {
+  routeSaveState[path] = 'saved';
+  savedTimers.set(
+    path,
+    setTimeout(() => {
+      savedTimers.delete(path);
+      if (routeSaveState[path] === 'saved') {
+        delete routeSaveState[path];
+      }
+    }, SAVED_FEEDBACK_MS),
+  );
 }
 
 async function onChangeRoute(proxy, routeKey) {
   const previousRoute = proxy.activeRoute;
   proxy.activeRoute = routeKey;
-  savingMap[proxy.path] = true;
-  errorMessage.value = '';
+  clearSavedTimer(proxy.path);
+  routeSaveState[proxy.path] = 'saving';
 
   try {
     const result = await window.proxyApi.setActiveRoute(proxy.path, routeKey);
@@ -176,33 +130,83 @@ async function onChangeRoute(proxy, routeKey) {
     }
 
     config.value = result.config;
+    markRouteSaved(proxy.path);
   } catch (error) {
+    // Roll the control back to what the runtime still has, and let the toast explain.
     proxy.activeRoute = previousRoute;
-    errorMessage.value = error.message;
-  } finally {
-    savingMap[proxy.path] = false;
+    delete routeSaveState[proxy.path];
+    pushToast(error.message || 'Failed to update proxy route', { tone: 'error' });
+  }
+}
+
+// View-only: the main process ring buffer and the session counter stay untouched.
+function clearLogs() {
+  logs.value = [];
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'apis') loadEditor();
+  else editorDirty.value = false;
+});
+
+// Every tab switch funnels through here so unsaved editor work gets a confirmation first.
+function requestTab(tabId) {
+  if (tabId === activeTab.value) {
+    return;
+  }
+  if (activeTab.value === 'apis' && editorDirty.value) {
+    pendingTab.value = tabId;
+    return;
+  }
+  activeTab.value = tabId;
+}
+
+function confirmLeaveEditor() {
+  activeTab.value = pendingTab.value;
+  pendingTab.value = null;
+}
+
+// Ctrl/Cmd+1..3 jumps straight to a tab from anywhere in the app.
+function onKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+    const index = Number.parseInt(event.key, 10) - 1;
+    if (Number.isInteger(index) && index >= 0 && index < tabs.length) {
+      event.preventDefault();
+      requestTab(tabs[index].id);
+    }
   }
 }
 
 onMounted(async () => {
   try {
     config.value = await window.proxyApi.getConfig();
-    logs.value = await window.proxyApi.getLogHistory();
-    await scrollLogsToBottom();
+    status.value = await window.proxyApi.getStatus();
 
-    unsubscribeLogs = window.proxyApi.onLogEntry(async (entry) => {
-      logs.value.push(entry);
+    const history = await window.proxyApi.getLogHistory();
+    logs.value = history.map(withLogId);
+    requestCount.value = history.filter(isRequestEntry).length;
+
+    window.addEventListener('keydown', onKeydown);
+
+    unsubscribeLogs = window.proxyApi.onLogEntry((entry) => {
+      logs.value.push(withLogId(entry));
       if (logs.value.length > 1000) {
         logs.value.shift();
       }
-      await scrollLogsToBottom();
+      if (isRequestEntry(entry)) {
+        requestCount.value += 1;
+      }
     });
 
     unsubscribeConfigUpdates = window.proxyApi.onConfigUpdated((nextConfig) => {
       config.value = nextConfig;
     });
+
+    unsubscribeStatusUpdates = window.proxyApi.onStatusUpdated((nextStatus) => {
+      status.value = nextStatus;
+    });
   } catch (error) {
-    errorMessage.value = error.message || 'Failed to load application data';
+    pushToast(error.message || 'Failed to load application data', { tone: 'error' });
   } finally {
     loading.value = false;
   }
@@ -215,357 +219,139 @@ onUnmounted(() => {
   if (unsubscribeConfigUpdates) {
     unsubscribeConfigUpdates();
   }
+  if (unsubscribeStatusUpdates) {
+    unsubscribeStatusUpdates();
+  }
+  for (const timer of savedTimers.values()) {
+    clearTimeout(timer);
+  }
+  savedTimers.clear();
+  window.removeEventListener('keydown', onKeydown);
 });
 </script>
 
 <template>
   <main class="shell">
-    <nav class="tabs">
-      <button class="tab-button" :class="{ active: activeTab === 'logs' }" @click="activeTab = 'logs'">Logs</button>
-      <button class="tab-button" :class="{ active: activeTab === 'config' }" @click="activeTab = 'config'">
-        Configuration
-      </button>
-    </nav>
+    <AppBar :model-value="activeTab" :tabs="tabs" @update:model-value="requestTab" />
 
-    <section v-if="activeTab === 'logs'" class="panel panel-logs">
-      <div ref="logsPanel" class="log-stream">
-        <p v-if="!logs.length" class="empty">No logs yet.</p>
-        <table v-else class="logs-table">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Status</th>
-              <th>Method</th>
-              <th>Proxy</th>
-              <th>Destination</th>
-              <th>Request</th>
-              <th>Response</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(entry, index) in logs" :key="`${entry.timestamp}-${index}`">
-              <td>{{ formatTimestamp(entry.timestamp) }}</td>
-              <td>
-                <span class="badge" :class="statusBadgeClass(entry)">
-                  {{ statusLabel(entry) }}
-                </span>
-              </td>
-              <td>
-                <span class="badge" :class="methodBadgeClass(entry.method)">
-                  {{ (entry.method || '-').toUpperCase() }}
-                </span>
-              </td>
-              <td><code>{{ entry.proxyPath || '-' }}</code></td>
-              <td>
-                <code>
-                  <span
-                    v-if="destinationParts(entry).base"
-                    class="destination-static"
-                  >{{ destinationParts(entry).base }}</span>
-                  <span>{{ destinationParts(entry).suffix }}</span>
-                </code>
-              </td>
-              <td>
-                <div class="inspect-icons">
-                  <span
-                    class="inspect-icon"
-                    :class="{ unavailable: !hasInspectableData(entry.requestHeaders) }"
-                    :title="hasInspectableData(entry.requestHeaders) ? headerTooltipValue(entry.requestHeaders) : null"
-                  >🧾</span>
-                  <span
-                    class="inspect-icon"
-                    :class="{ unavailable: !hasInspectableData(entry.requestBody) }"
-                    :title="hasInspectableData(entry.requestBody) ? bodyTooltipValue(entry.requestBody) : null"
-                  >📦</span>
-                </div>
-              </td>
-              <td>
-                <div class="inspect-icons">
-                  <span
-                    class="inspect-icon"
-                    :class="{ unavailable: !hasInspectableData(entry.responseHeaders) }"
-                    :title="hasInspectableData(entry.responseHeaders) ? headerTooltipValue(entry.responseHeaders) : null"
-                  >🧾</span>
-                  <span
-                    class="inspect-icon"
-                    :class="{ unavailable: !hasInspectableData(entry.responseBody) }"
-                    :title="hasInspectableData(entry.responseBody) ? bodyTooltipValue(entry.responseBody) : null"
-                  >📦</span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <div class="content">
+      <section
+        v-if="activeTab === 'logs'"
+        id="panel-logs"
+        class="panel panel-logs"
+        role="tabpanel"
+        aria-labelledby="tab-logs"
+        tabindex="0"
+      >
+        <LogsTab :logs="logs" @clear="clearLogs" />
+      </section>
 
-    <section v-else class="panel panel-proxies">
-      <header>
-        <h1>Proxy Router</h1>
-        <p v-if="config">Port: <strong>{{ config.port }}</strong></p>
-      </header>
+      <section
+        v-else-if="activeTab === 'config'"
+        id="panel-config"
+        class="panel"
+        role="tabpanel"
+        aria-labelledby="tab-config"
+        tabindex="0"
+      >
+        <RoutesTab
+          :proxies="proxies"
+          :loading="loading"
+          :save-state="routeSaveState"
+          @change-route="onChangeRoute"
+          @open-settings="requestTab('apis')"
+        />
+      </section>
 
-      <p v-if="loading" class="status">Loading configuration...</p>
-      <p v-else-if="!proxies.length" class="status">No proxies configured.</p>
-      <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
+      <section
+        v-else-if="activeTab === 'apis'"
+        id="panel-apis"
+        class="panel"
+        role="tabpanel"
+        aria-labelledby="tab-apis"
+        tabindex="0"
+      >
+        <SettingsTab
+          :config="editorConfig"
+          :loading="editorLoading"
+          :saving="editorSaving"
+          @save="saveProxies"
+          @notify="(toast) => pushToast(toast.message, toast)"
+          @dirty-change="editorDirty = $event"
+        />
+      </section>
+    </div>
 
-      <table v-if="!loading && proxies.length" class="proxy-table">
-        <thead>
-          <tr>
-            <th>Application</th>
-            <th>Path</th>
-            <th>Environment</th>
-            <th>Destination</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="proxy in proxies" :key="proxy.path">
-            <td>{{ proxy.name }}</td>
-            <td><code>{{ proxy.path }}</code></td>
-            <td>
-              <select
-                :value="proxy.activeRoute"
-                :disabled="savingMap[proxy.path]"
-                @change="onChangeRoute(proxy, $event.target.value)"
-              >
-                <option v-for="routeKey in Object.keys(proxy.routes)" :key="routeKey" :value="routeKey">
-                  {{ routeKey }}
-                </option>
-              </select>
-            </td>
-            <td><code>{{ destinationFor(proxy) }}</code></td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    <ConfirmDialog
+      :open="pendingTab !== null"
+      title="Discard unsaved changes?"
+      message="Your edits to the proxy configuration have not been saved. Leaving this tab drops them."
+      confirm-label="Discard"
+      cancel-label="Keep editing"
+      @confirm="confirmLeaveEditor"
+      @cancel="pendingTab = null"
+    />
+
+    <ToastHost
+      :toasts="toasts"
+      :lifted="activeTab === 'apis'"
+      @dismiss="dismissToast"
+      @action="runToastAction"
+    />
+
+    <StatusBar
+      :status-text="statusText"
+      :listening="isListening"
+      :detail="status?.error || ''"
+      :port="statusPort"
+      :proxy-count="statusProxyCount"
+      :request-count="requestCount"
+    />
   </main>
 </template>
 
 <style scoped>
-:global(body) {
-  margin: 0;
-  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
-  background: radial-gradient(circle at top left, #1a2030 0%, #0f131d 48%, #090c14 100%);
-  color: #d7deef;
-}
-
-:global(*) {
-  box-sizing: border-box;
-}
-
+/* Layout skeleton: the shell owns the viewport, every panel fills what is left. */
 .shell {
-  min-height: 100vh;
-  padding: 24px;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  overflow: hidden;
 }
 
-.tabs {
+.content {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 10px;
-}
-
-.tab-button {
-  border: 1px solid rgba(170, 185, 219, 0.34);
-  background: #161e2d;
-  color: #c9d7f7;
-  border-radius: 10px;
-  padding: 8px 14px;
-  font: inherit;
-  cursor: pointer;
-}
-
-.tab-button.active {
-  background: #334563;
-  color: #f0f5ff;
-  border-color: rgba(196, 210, 243, 0.58);
+  overflow: hidden;
+  padding: var(--space-4) var(--space-6);
 }
 
 .panel {
-  background: rgba(20, 26, 39, 0.92);
-  border: 1px solid rgba(139, 160, 204, 0.24);
-  border-radius: 14px;
-  backdrop-filter: blur(7px);
-  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.4);
-  padding: 18px;
-}
-
-header h1 {
-  margin: 0;
-  font-size: 30px;
-  letter-spacing: 0.03em;
-}
-
-header p {
-  margin: 10px 0 0;
-}
-
-.status {
-  margin-top: 12px;
-}
-
-.error {
-  margin-top: 12px;
-  color: #ff7f7f;
-  font-weight: 600;
-}
-
-.proxy-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 12px;
-}
-
-.proxy-table th,
-.proxy-table td {
-  text-align: left;
-  padding: 10px;
-  border-bottom: 1px solid rgba(170, 185, 219, 0.14);
-}
-
-select {
-  width: 100%;
-  border: 1px solid rgba(170, 185, 219, 0.34);
-  border-radius: 8px;
-  background: #161e2d;
-  color: #e5edff;
-  padding: 7px 10px;
-  font: inherit;
-}
-
-.log-stream {
-  margin-top: 8px;
-  height: calc(100vh - 190px);
-  max-height: 760px;
-  overflow: auto;
-  background: #080d16;
-  color: #d7deef;
-  border-radius: 10px;
-  padding: 12px;
-  border: 1px solid rgba(170, 185, 219, 0.2);
-}
-
-.logs-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.logs-table th,
-.logs-table td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(170, 185, 219, 0.14);
-  vertical-align: middle;
-}
-
-.logs-table code {
-  color: #c7d7ff;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.destination-static {
-  color: #6f7789;
-}
-
-.inspect-icons {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
 }
 
-.inspect-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  background: #2f3c57;
-  color: #e6efff;
-  cursor: default;
+.panel-logs {
+  padding: var(--space-3);
 }
 
-.inspect-icon.unavailable {
-  filter: grayscale(1);
-  opacity: 0.45;
-}
-
-
-.badge {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.status-info {
-  background: #2f4e97;
-  color: #e0ecff;
-}
-
-.status-ok {
-  background: #1f7d4d;
-  color: #dfffe8;
-}
-
-.status-client-error {
-  background: #8a6a21;
-  color: #fff3d2;
-}
-
-.status-server-error {
-  background: #9a3535;
-  color: #ffe2e2;
-}
-
-.method-get {
-  background: #235a9e;
-  color: #deedff;
-}
-
-.method-post {
-  background: #21653f;
-  color: #dcffe8;
-}
-
-.method-put {
-  background: #7f5c20;
-  color: #fff0cc;
-}
-
-.method-patch {
-  background: #6441a2;
-  color: #efe4ff;
-}
-
-.method-delete {
-  background: #9c2f55;
-  color: #ffe1ee;
-}
-
-.method-default {
-  background: #4b556b;
-  color: #edf2ff;
-}
-
-.empty {
-  margin: 0;
-  color: #8fa3c8;
+.panel:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
 }
 
 @media (max-width: 980px) {
-  .shell {
-    padding: 14px;
-  }
-
-  .log-stream {
-    height: 300px;
+  .content {
+    padding: var(--space-3);
   }
 }
 </style>

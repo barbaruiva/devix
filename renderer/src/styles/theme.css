@@ -1,0 +1,271 @@
+/*
+ * Design tokens — single source of truth for the renderer.
+ * Dark theme only for now; the structure (surfaces in layers, semantic pairs)
+ * is what a future light theme would re-declare.
+ */
+
+/*
+ * Fonts ship with the app: the CSP is `default-src 'self'`, so a CDN would be blocked
+ * and the families would silently fall back to whatever the OS has. These are the
+ * variable woff2 files Google serves to Chromium, copied from `renderer/public/` into
+ * the bundle, so a single file per subset covers every weight we use.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  /* Typography */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Background */
+  --bg-base: #090c14;
+  --bg-gradient: radial-gradient(circle at top left, #1a2030 0%, #0f131d 48%, var(--bg-base) 100%);
+
+  /* Surfaces, in layers */
+  --surface-0: #080d16; /* sunken: log stream, detail panel, inputs */
+  /* Opaque: the panel covers the whole content area, so there is nothing behind it
+     to show through — translucency there only washed out the text. */
+  --surface-1: #141a27; /* panels */
+  --surface-2: #161e2d; /* controls: buttons, selects, cards */
+  --surface-3: #26334c; /* hover / raised */
+  --surface-hover: rgba(120, 145, 200, 0.1); /* translucent row hover */
+  --surface-zebra: rgba(120, 145, 200, 0.035); /* alternating table rows */
+  --surface-bar: rgba(10, 14, 23, 0.72); /* chrome laid over the shell: status bar */
+  --surface-sticky: rgba(8, 13, 22, 0.86); /* content scrolls under it: sticky thead, detail header */
+  --surface-overlay: rgba(22, 30, 45, 0.96); /* floating over everything: tooltips */
+
+  /* Borders */
+  --border-subtle: rgba(139, 160, 204, 0.16);
+  --border-default: rgba(170, 185, 219, 0.28);
+  --border-strong: rgba(170, 185, 219, 0.5);
+
+  /* Text */
+  --text-primary: #d7deef;
+  --text-strong: #eaf0ff;
+  --text-secondary: #9db1d8;
+  --text-muted: #8fa3c8;
+  /* The dimmest step still has to clear 4.5:1 on --surface-2, the lightest surface
+     it lands on (placeholders, the static half of a destination, the brand). */
+  --text-dim: #828ba3;
+  --text-code: #c7d7ff;
+
+  /* Accent */
+  --accent: #2d5bb5;
+  --accent-hover: #3665c9;
+  --accent-border: #3a6fd4;
+  --accent-subtle: rgba(63, 103, 180, 0.28);
+  --accent-wash: rgba(63, 103, 180, 0.14); /* selected row: a tint, not a fill */
+  --accent-ring: rgba(88, 132, 214, 0.55);
+
+  /* Semantic */
+  --ok: #3fbf72;
+  --ok-bg: #1f7d4d;
+  --ok-fg: #dfffe8;
+
+  --warn: #d6a13a;
+  --warn-bg: #8a6a21;
+  --warn-fg: #fff3d2;
+
+  --danger: #b34a4a;
+  --danger-bg: #9a3535;
+  --danger-fg: #ffe2e2;
+  --danger-surface: rgba(92, 26, 26, 0.6);
+  --danger-surface-hover: #7a2424;
+  --danger-border: #6b2424;
+  --danger-border-hover: #963030;
+  --danger-text: #ff8f8f;
+
+  --info: #4f78cb;
+  --info-bg: #2f4e97;
+  --info-fg: #e0ecff;
+
+  /* JSON syntax highlighting */
+  --code-key: #93b4ff;
+  --code-string: #9fd8a5;
+  --code-number: #e2b878;
+  --code-boolean: #c79bf0;
+  --code-null: #8fa3c8;
+
+  /* HTTP method badges */
+  --method-get-bg: #235a9e;
+  --method-get-fg: #deedff;
+  --method-post-bg: #21653f;
+  --method-post-fg: #dcffe8;
+  --method-put-bg: #7f5c20;
+  --method-put-fg: #fff0cc;
+  --method-patch-bg: #6441a2;
+  --method-patch-fg: #efe4ff;
+  --method-delete-bg: #9c2f55;
+  --method-delete-fg: #ffe1ee;
+  --method-default-bg: #4b556b;
+  --method-default-fg: #edf2ff;
+
+  /* Metrics */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.36);
+
+  --dur-fast: 120ms;
+  --dur-base: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* Scrollbars */
+  --scrollbar-size: 10px;
+  --scrollbar-thumb: rgba(139, 160, 204, 0.24);
+  --scrollbar-thumb-hover: rgba(160, 180, 220, 0.42);
+
+  /* Chrome */
+  --app-bar-height: 44px;
+  --status-bar-height: 30px;
+  --editor-bar-height: 46px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: var(--bg-gradient);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Columns of timestamps, status codes and counters only line up with fixed-width digits. */
+code,
+kbd,
+samp,
+pre,
+.badge,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Thin scrollbars, drawn in the surface vocabulary instead of the Chromium default.
+ * The transparent border + background-clip is what keeps the thumb visually narrow
+ * while the track stays wide enough to grab.
+ */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* Shared pill shape for the status/method badges; each component owns its own colors. */
+.badge {
+  display: inline-block;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Shared focus ring: every interactive control uses it, so focus looks the same
+   everywhere and only the offset changes (inset for controls that sit flush). */
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+/*
+ * Reduced motion: the durations are tokens, so zeroing them covers every transition
+ * the components declare; the blanket rule catches keyframes and anything inline.
+ * Static transforms (the chevron's rotation, the centered pill) stay — they carry
+ * state, they are not motion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

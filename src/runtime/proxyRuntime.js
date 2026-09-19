@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const { EventEmitter } = require('events');
 const express = require('express');
 const chalk = require('chalk');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
 const { Logger } = require('./logger');
 
 function readJson(filePath, fileLabel) {
@@ -93,6 +94,21 @@ function colorizeRoute(route) {
   }
 }
 
+const BODY_CAPTURE_LIMIT = 256 * 1024;
+
+function parseBody(raw) {
+  if (!raw) return null;
+  const buf = Buffer.isBuffer(raw) ? raw : null;
+  const str = buf ? buf.toString('utf8') : (typeof raw === 'string' ? raw : null);
+  if (!str || str.trim().length === 0) return null;
+  if (buf && buf.length > BODY_CAPTURE_LIMIT) return `[body too large: ${buf.length} bytes]`;
+  try {
+    return JSON.parse(str);
+  } catch {
+    return str.length <= 10000 ? str : `${str.slice(0, 10000)}… [truncated]`;
+  }
+}
+
 function sanitizeForLog(value) {
   if (value === undefined) {
     return null;
@@ -126,10 +142,31 @@ class ProxyRuntime {
     this.isReloading = false;
     this.pendingReload = false;
     this.ignoreWatchEventsUntil = 0;
+    this.listening = false;
+    this.lastError = null;
+    this.statusEmitter = new EventEmitter();
   }
 
   getConfig() {
     return this.config;
+  }
+
+  getStatus() {
+    return {
+      listening: this.listening,
+      port: this.config?.port ?? null,
+      proxyCount: this.config?.proxies?.length ?? 0,
+      error: this.lastError,
+    };
+  }
+
+  onStatusChange(listener) {
+    this.statusEmitter.on('status', listener);
+    return () => this.statusEmitter.off('status', listener);
+  }
+
+  emitStatus() {
+    this.statusEmitter.emit('status', this.getStatus());
   }
 
   loadState() {
@@ -180,11 +217,21 @@ class ProxyRuntime {
       const middlewareConfig = {
         target: routeConfig.destination,
         changeOrigin: true,
-        onProxyRes: (proxyRes, req) => {
+        selfHandleResponse: true,
+        onProxyReq: (proxyReq, req) => {
+          const chunks = [];
+          req.on('data', (chunk) => chunks.push(chunk));
+          req.on('end', () => {
+            req._capturedBody = chunks.length > 0 ? Buffer.concat(chunks) : null;
+          });
+        },
+        onProxyRes: responseInterceptor(async (responseBuffer, proxyRes, req) => {
           const proxiedPath = proxyRes.req.path === '/' ? '' : proxyRes.req.path;
           const destinationPath = `${routeConfig.destination}${proxiedPath}`;
           const statusCode = Number.parseInt(proxyRes.statusCode, 10) || 0;
           const method = req.method;
+          const requestBody = parseBody(req._capturedBody ?? null);
+          const responseBody = parseBody(responseBuffer.length > 0 && responseBuffer.length <= BODY_CAPTURE_LIMIT ? responseBuffer : null);
           this.logger.info(
             `[${statusCode}] ${method.padStart(7)} ${proxy.path}${req.path || ''} -> ${destinationPath}`,
             `[${colorizeStatusCode(statusCode)}] ${method.padStart(7)} ${proxy.path}${chalk.gray(req.path || '')} -> ${routeConfig.destination}${chalk.gray(proxiedPath)}`,
@@ -196,17 +243,19 @@ class ProxyRuntime {
               destinationBase: routeConfig.destination,
               destinationPath,
               requestHeaders: sanitizeForLog(req.headers),
-              requestBody: sanitizeForLog(req.body),
+              requestBody,
               responseHeaders: sanitizeForLog(proxyRes.headers),
-              responseBody: null,
+              responseBody,
             },
           );
-        },
+          return responseBuffer;
+        }),
         onError: (err, req, res) => {
           const statusCode = 500;
           const method = req.method;
           const proxiedPath = req.path || '';
           const destinationPath = `${routeConfig.destination}${proxiedPath}`;
+          const requestBody = parseBody(req._capturedBody ?? null);
           this.logger.error(
             `[${statusCode}] ${method.padStart(7)} ${proxy.path}${proxiedPath} -> ${destinationPath}`,
             `[${colorizeStatusCode(statusCode)}] ${method.padStart(7)} ${proxy.path}${chalk.gray(proxiedPath)} -> ${routeConfig.destination}${chalk.gray(proxiedPath)}`,
@@ -218,7 +267,7 @@ class ProxyRuntime {
               destinationBase: routeConfig.destination,
               destinationPath,
               requestHeaders: sanitizeForLog(req.headers),
-              requestBody: sanitizeForLog(req.body),
+              requestBody,
               responseHeaders: null,
               responseBody: sanitizeForLog({ error: err.message || String(err) }),
             },
@@ -248,27 +297,23 @@ class ProxyRuntime {
     });
 
     this.server = app.listen(this.config.port, () => {
-      const message = `Server started on port ${this.config.port} with ${this.config.proxies.length} ${this.config.proxies.length > 1 ? 'proxies' : 'proxy'}`;
+      const proxyCount = this.config.proxies.length;
+      this.listening = true;
+      this.lastError = null;
+      // Terminal only: the GUI shows this through the status bar instead.
       this.logger.info(
-        message,
+        `Server started on port ${this.config.port} with ${proxyCount} ${proxyCount > 1 ? 'proxies' : 'proxy'}`,
         undefined,
-        {
-          kind: 'lifecycle',
-          statusCode: 200,
-          method: 'INFO',
-          proxyPath: '-',
-          destinationBase: null,
-          destinationPath: message,
-          requestHeaders: null,
-          requestBody: null,
-          responseHeaders: null,
-          responseBody: null,
-        },
+        { gui: false },
       );
+      this.emitStatus();
     });
 
     this.server.on('error', (error) => {
+      this.listening = false;
+      this.lastError = error.message;
       this.logger.error(`Server failed to listen on port ${this.config.port}: ${error.message}`);
+      this.emitStatus();
     });
 
     this.startWatchers();
@@ -285,6 +330,8 @@ class ProxyRuntime {
       const server = this.server;
       this.server = null;
       this.app = null;
+      this.listening = false;
+      this.emitStatus();
 
       server.close((error) => {
         if (error) {
@@ -378,6 +425,25 @@ class ProxyRuntime {
       this.reloadTimer = null;
       this.reloadFromFileChange(reason);
     }, 200);
+  }
+
+  getProxiesConfig() {
+    if (!this.proxiesPath) {
+      throw new Error('Proxy runtime has not been started yet');
+    }
+    return loadProxiesConfig(this.proxiesPath);
+  }
+
+  async updateProxiesConfig(config) {
+    if (!this.proxiesPath) {
+      throw new Error('Proxy runtime has not been started yet');
+    }
+    if (!config || !Array.isArray(config.proxies)) {
+      throw new Error('"proxies" must be an array');
+    }
+    this.ignoreWatchEventsUntil = Date.now() + 1000;
+    writeJson(this.proxiesPath, config);
+    await this.reload();
   }
 
   async reloadFromFileChange(reason) {
