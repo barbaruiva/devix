@@ -2,7 +2,7 @@
   "name": "devix-router",
   "productName": "devix",
   "desktopName": "devix.desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local development proxy router with an Electron GUI",
   "homepage": "https://github.com/barbaruiva/devix",
   "repository": {
