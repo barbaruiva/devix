@@ -19,13 +19,17 @@ npx vitest run -t 'falls back to first route'      # single test by name
 
 npm run lint
 npm run lint:fix
+
+npm run dist:linux   # package AppImage + .deb into release/ (dist:win for the NSIS installer)
 ```
 
 Local fake backend for the `local` routes in `proxies-template.json`:
 `docker compose up fake-api` (json-server on port 3001, data in `docker/db.json`).
 
-Before running anything, `config.json` and `proxies.json` must exist — both are gitignored.
-Copy them from `config-template.json` / `proxies-template.json`.
+`config.json` and `proxies.json` are gitignored. The CLI requires them in the cwd (copy from
+`config-template.json` / `proxies-template.json`); the Electron app seeds any missing one from the
+templates via `ensureConfigFiles` (`src/runtime/configFiles.js`). Unpackaged it uses the repo root;
+packaged it uses `app.getPath('userData')` (`~/.config/devix`), since `app.asar` is read-only.
 
 ## Architecture
 
@@ -78,6 +82,15 @@ using those tokens).
 The tray menu mirrors runtime state; after any config mutation call both `refreshTrayMenu()` and
 `notifyConfigUpdated()` so tray and renderer stay in sync. Closing the window hides it — the app lives
 in the tray until Quit sets `app.isQuitting`.
+
+## Packaging and releases
+
+electron-builder config lives in the `build` field of `package.json`. Output goes to `release/`
+(not the default `dist/`, which holds the renderer build). `build/icon.png` is the app icon — currently
+an upscale of the tray icon. The `files` allowlist decides what ships in `app.asar`: a new top-level
+file or directory needed at runtime must be added there. `.github/workflows/release.yml` builds Linux
+and Windows on tag push `v*` (tag must equal `package.json` version) and publishes a GitHub Release;
+`workflow_dispatch` builds without releasing.
 
 ## Gotchas
 

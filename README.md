@@ -86,6 +86,21 @@ Active route selection by unique proxy path.
 - `npm run start:cli`: run proxy server from terminal
 - `npm run dev`: run Vite and Electron together
 - `npm run build:renderer`: build Vue renderer to `dist/renderer`
+- `npm run dist:linux` / `npm run dist:win`: package the app into `release/` (AppImage + `.deb` / NSIS installer)
+
+## Releases
+
+`.github/workflows/release.yml` builds Linux (AppImage, `.deb`) and Windows (NSIS installer) packages
+on GitHub Actions.
+
+- **Publish a release:** bump the version and push the tag, e.g. `npm version patch && git push --follow-tags`.
+  The tag must match `package.json`'s `version` (`v1.0.1` ↔ `1.0.1`), otherwise the build fails.
+- **Build only:** run the workflow manually from the Actions tab; the packages are attached to the run as artifacts.
+
+The Windows installer is unsigned, so SmartScreen warns on first run ("More info → Run anyway").
+
+Packaged builds keep `config.json` and `proxies.json` in the per-user data directory
+(`~/.config/devix` on Linux, `%APPDATA%\devix` on Windows), seeded from the templates on first launch.
 
 ## Logs (GUI)
 

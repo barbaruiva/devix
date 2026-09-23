@@ -2,10 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const { ProxyRuntime } = require('../src/runtime/proxyRuntime');
+const { ensureConfigFiles } = require('../src/runtime/configFiles');
 
 const runtime = new ProxyRuntime();
-const configPath = path.resolve(__dirname, '..', 'config.json');
-const proxiesPath = path.resolve(__dirname, '..', 'proxies.json');
+const appRoot = path.resolve(__dirname, '..');
+// Packaged builds run from a read-only app.asar, so their editable config lives
+// in the per-user data dir (~/.config/devix, %APPDATA%\devix). Unpackaged runs
+// keep using the repo-root files. Missing files are seeded from the templates.
+const configDir = app.isPackaged ? app.getPath('userData') : appRoot;
+const configPath = path.join(configDir, 'config.json');
+const proxiesPath = path.join(configDir, 'proxies.json');
 const logsBuffer = [];
 const MAX_LOGS = 1000;
 const trayIconPath = path.join(__dirname, 'assets', 'tray-icon.png');
@@ -146,7 +152,7 @@ function refreshTrayMenu() {
   const config = runtime.getConfig();
   const proxyItems = (config?.proxies || []).map(buildProxyMenuItem);
   const menuTemplate = [
-    { label: `Devix v${app.getVersion()}`, enabled: false },
+    { label: `devix v${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     ...proxyItems,
     { type: 'separator' },
@@ -175,7 +181,7 @@ function createTray() {
 
   const icon = nativeImage.createFromPath(trayIconPath);
   tray = new Tray(icon);
-  tray.setToolTip('Devix');
+  tray.setToolTip('devix');
   refreshTrayMenu();
 
   tray.on('click', () => {
@@ -236,6 +242,10 @@ ipcMain.handle('proxies:save', async (_, config) => {
 
 app.whenReady().then(() => {
   try {
+    const { created } = ensureConfigFiles(configDir, appRoot);
+    created.forEach((filePath) => {
+      runtime.logger.info(`Created ${filePath} from template`);
+    });
     runtime.start({ configPath, proxiesPath });
   } catch (error) {
     dialog.showErrorBox('Failed to start proxy runtime', error.message || String(error));

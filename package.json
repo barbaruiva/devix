@@ -1,7 +1,14 @@
 {
   "name": "devix-router",
+  "productName": "devix",
+  "desktopName": "devix.desktop",
   "version": "1.0.0",
-  "description": "",
+  "description": "Local development proxy router with an Electron GUI",
+  "homepage": "https://github.com/barbaruiva/devix",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/barbaruiva/devix.git"
+  },
   "main": "electron/main.js",
   "dependencies": {
     "chalk": "^4.1.2",
@@ -14,6 +21,7 @@
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
     "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
     "eslint": "^10.1.0",
     "eslint-plugin-vue": "^10.8.0",
     "globals": "^17.4.0",
@@ -30,9 +38,55 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:renderer": "vite build",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "dist": "npm run build:renderer && electron-builder --publish never",
+    "dist:linux": "npm run build:renderer && electron-builder --linux --publish never",
+    "dist:win": "npm run build:renderer && electron-builder --win --publish never"
   },
-  "author": "",
+  "build": {
+    "appId": "io.github.barbaruiva.devix",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "src/runtime/**",
+      "!src/runtime/**/*.test.js",
+      "dist/renderer/**",
+      "config-template.json",
+      "proxies-template.json",
+      "package.json"
+    ],
+    "publish": null,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "executableName": "devix",
+      "syncDesktopName": true,
+      "category": "Development",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "${name}_${version}_${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "author": {
+    "name": "barbaruiva",
+    "email": "19174237+barbaruiva@users.noreply.github.com"
+  },
   "license": "ISC",
   "allowScripts": {
     "electron@31.7.7": true,
