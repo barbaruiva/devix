@@ -1,5 +1,5 @@
 {
-  "name": "express-proxy-router",
+  "name": "devix-router",
   "version": "1.0.0",
   "description": "",
   "main": "electron/main.js",
@@ -33,5 +33,9 @@
     "lint:fix": "eslint . --fix"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "allowScripts": {
+    "electron@31.7.7": true,
+    "esbuild@0.21.5": true
+  }
 }

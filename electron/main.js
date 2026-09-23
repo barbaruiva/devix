@@ -146,7 +146,7 @@ function refreshTrayMenu() {
   const config = runtime.getConfig();
   const proxyItems = (config?.proxies || []).map(buildProxyMenuItem);
   const menuTemplate = [
-    { label: 'Devix', enabled: false },
+    { label: `Devix v${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     ...proxyItems,
     { type: 'separator' },
